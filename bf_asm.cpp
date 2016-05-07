@@ -39,22 +39,24 @@ typedef Bitfield<Bitfield_traits_default<uint64_t> > Bf12;
 typedef Bitfield_w_fmt<Bf12, Fmt> Bwf12;
 
 Bf11::Value_t r11(Bf11::Storage_t *p)
-  { return(Bf11::read(p, BITF(Bwf11, data))); }
+  { return(BITF(Bwf11, p, data).read()); }
 void w11(Bf11::Storage_t *p, Bf11::Value_t v)
-  { Bf11::write(p, BITF(Bwf11, data), v); }
+  { BITF(Bwf11, p, data).write(v); }
 
-Bf11::Value_t r11t(Bf11::Storage_t *p) { return(Bf11::read(p, &Fmt::data)); }
+Bf11::Value_t r11t(Bf11::Storage_t *p)
+  { return(Bf11::f(p, &Fmt::data)); }
 void w11t(Bf11::Storage_t *p, Bf11::Value_t v)
-  { Bf11::write(p, &Fmt::data, v); }
+  { Bf11::f(p, &Fmt::data) = v; }
 
 Bf12::Value_t r12(Bf12::Storage_t *p)
-  { return(Bf12::read(p, BITF(Bwf12, data))); }
+  { return(BITF(Bwf12, p, data)); }
 void w12(Bf12::Storage_t *p, Bf12::Value_t v)
-  { Bf12::write(p, BITF(Bwf12, data), v); }
+  { BITF(Bwf12, p, data).write(v); }
 
-Bf12::Value_t r12t(Bf12::Storage_t *p) { return(Bf12::read(p, &Fmt::data)); }
+Bf12::Value_t r12t(Bf12::Storage_t *p)
+  { return(Bf12::f(p, &Fmt::data).read()); }
 void w12t(Bf12::Storage_t *p, Bf12::Value_t v)
-  { Bf12::write(p, &Fmt::data, v); }
+  { Bf12::f(p, &Fmt::data) = v; }
 
 struct Bft21 : Bitfield_traits_default<uint64_t, uint8_t>
   {
@@ -70,19 +72,21 @@ typedef Bitfield<Bft22> Bf22;
 typedef Bitfield_w_fmt<Bf22, Fmt> Bwf22;
 
 Bf21::Value_t r21(Bf21::Storage_t *p)
-  { return(Bf21::read(p, BITF(Bwf21, data))); }
+  { return(BITF(Bwf21, p, data).read()); }
 void w21(Bf21::Storage_t *p, Bf21::Value_t v)
-  { Bf21::write(p, BITF(Bwf21, data), v); }
+  { BITF(Bwf21, p, data) = v; }
 
-Bf21::Value_t r21t(Bf21::Storage_t *p) { return(Bf21::read(p, &Fmt::data)); }
+Bf21::Value_t r21t(Bf21::Storage_t *p)
+  { return(Bf21::f(p, &Fmt::data)); }
 void w21t(Bf21::Storage_t *p, Bf21::Value_t v)
-  { Bf21::write(p, &Fmt::data, v); }
+  { Bf21::f(p, &Fmt::data).write(v); }
 
 Bf22::Value_t r22(Bf22::Storage_t *p)
-  { return(Bf22::read(p, BITF(Bwf22, data))); }
+  { return(BITF(Bwf22, p, data)); }
 void w22(Bf22::Storage_t *p, Bf22::Value_t v)
-  { Bf22::write(p, BITF(Bwf22, data), v); }
+  { BITF(Bwf22, p, data).write(v); }
 
-Bf22::Value_t r22t(Bf22::Storage_t *p) { return(Bf22::read(p, &Fmt::data)); }
+Bf22::Value_t r22t(Bf22::Storage_t *p)
+  { return(Bf22::f(p, &Fmt::data).read()); }
 void w22t(Bf22::Storage_t *p, Bf22::Value_t v)
-  { Bf22::write(p, &Fmt::data, v); }
+  { Bf22::f(p, &Fmt::data) = v; }

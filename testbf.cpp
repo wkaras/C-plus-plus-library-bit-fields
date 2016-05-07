@@ -17,17 +17,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// NOTE:  When compiling this code with gcc, the option -ftemplate-depth=1100
-// is necessary.
-
 #include "bitfield.h"
 
-#include <stdint.h>
+#include "testloop.h"
+
 #include <iostream>
+#include <stdint.h>
 #include <cstdlib>
 #include <cstddef>
-
-#include "testloop.h"
+#include <vector>
 
 inline bool is_big_endian()
   {
@@ -39,6 +37,11 @@ inline bool is_big_endian()
 uint64_t Saw16 = 0x5555;
 
 uint64_t Saw = (((((Saw16 << 16) | Saw16) << 16) | Saw16) << 16) | Saw16;
+
+uint64_t Saw3_16 = 0x3333;
+
+uint64_t Saw3 =
+  (((((Saw3_16 << 16) | Saw3_16) << 16) | Saw3_16) << 16) | Saw3_16;
 
 template <typename S_t, unsigned Num_s>
 struct Reverse
@@ -119,8 +122,10 @@ class Test_val
   };
 
 template <unsigned Offset, unsigned Width>
-struct Format : private Bitfield_format
+struct Format
   {
+    BITF_DEF_F
+
     F<32> pad[2];
     F<Offset> ofs;
     F<Width> data;
@@ -147,9 +152,107 @@ inline uint64_t saw2(unsigned bit_width)
 inline uint64_t ones(unsigned bit_width)
   { return(saw(bit_width, ~uint64_t(0))); }
 
+#define NO_2F 1
+#define QUICK_TEST 0
+
+#if !NO_2F 
+
+class One_test_2f_c : private Test_base
+  {
+    typedef Bitfield<Bitfield_traits_default<uint32_t, const uint16_t> > Bf;
+
+    typedef uint16_t Mutable_storage_t;
+
+    typedef Bf::Value_t Value_t;
+
+    typedef Format<15, 17> Fmt;
+
+    typedef Bitfield_w_fmt<Bf, Fmt> Bwf;
+
+    static Value_t sign_ext(Value_t v, unsigned field_width)
+      {
+        if (((v >> (field_width - 1)) & 1) && field_width)
+          v |= ~Bf::mask(field_width);
+
+        return(v);
+      }
+
+    virtual bool test()
+      {
+        const unsigned F_w = Bf::field_width(&Fmt::data);
+
+        const unsigned F_shift =
+          Bf::Storage_ls_bit_first ?
+            Bf::field_offset(&Fmt::data) - 64 :
+            128 - Bf::field_offset(&Fmt::data) - F_w;
+
+        Test_val<Mutable_storage_t, Bf::Storage_ls_bit_first> x =
+          ~(ones(F_w) << F_shift);
+
+        if (Bf::f(x.caddr(), &Fmt::data) != 0)
+          return(false);
+
+        if (Bf::f(x.caddr(), &Fmt::data).read_sign_extend() != 0)
+          return(false);
+
+        x = x | saw(F_w) << F_shift;
+
+        #if 0
+
+        // This code seems to trigger a G++ bug when compiled with
+        // level 3 optimization.
+
+        if (Bf::f(x.caddr(), &Fmt::data) != saw(F_w))
+          return(false);
+
+        if (Bf::f(x.caddr(), &Fmt::data).read_sign_extend() !=
+            sign_ext(saw(F_w), F_w))
+          return(false);
+
+        x = (saw2(F_w) << F_shift) | ~(ones(F_w) << F_shift);
+
+        if (Bf::f(x.caddr(), &Fmt::data) != saw2(F_w))
+          return(false);
+
+        #else
+
+        if (BITF(Bwf, x.caddr(), data) != saw(F_w))
+          return(false);
+
+        if (BITF(Bwf, x.caddr(), data).read_sign_extend() !=
+            sign_ext(saw(F_w), F_w))
+          return(false);
+
+        x = (saw2(F_w) << F_shift) | ~(ones(F_w) << F_shift);
+
+        if (BITF(Bwf, x.caddr(), data) != saw2(F_w))
+          return(false);
+
+        #endif
+
+        if (Bf::f(x.caddr(), &Fmt::data).read_sign_extend() !=
+            sign_ext(saw2(F_w), F_w))
+          return(false);
+
+        return(true);
+      }
+  };
+
+One_test_2f_c test_2f_c;
+
 template <class Bf, class Fmt>
 class One_test_2f : private Test_base
   {
+    typedef typename Bf::Value_t Value_t;
+
+    static Value_t sign_ext(Value_t v, unsigned field_width)
+      {
+        if (((v >> (field_width - 1)) & 1) && field_width)
+          v |= ~Bf::mask(field_width);
+
+        return(v);
+      }
+
     virtual bool test()
       {
         typedef typename Bf::Storage_t Storage_t;
@@ -164,80 +267,191 @@ class One_test_2f : private Test_base
         Test_val<Storage_t, Bf::Storage_ls_bit_first> x =
           ~(ones(F_w) << F_shift);
 
-        if (Bf::read(x.caddr(), &Fmt::data) != 0)
+        if (Bf::f(x.addr(), &Fmt::data) != 0)
+          return(false);
+
+        if (Bf::f(x.addr(), &Fmt::data).read_sign_extend() != 0)
           return(false);
 
         x = x | saw(F_w) << F_shift;
 
-        if (Bf::read(x.caddr(), &Fmt::data) != saw(F_w))
+        if (Bf::f(x.addr(), &Fmt::data) != saw(F_w))
+          return(false);
+
+        if (Bf::f(x.addr(), &Fmt::data).read_sign_extend() !=
+            sign_ext(saw(F_w), F_w))
           return(false);
 
         x = (saw2(F_w) << F_shift) | ~(ones(F_w) << F_shift);
 
-        if (Bf::read(x.caddr(), &Fmt::data) != saw2(F_w))
+        if (Bf::f(x.addr(), &Fmt::data) != saw2(F_w))
+          return(false);
+
+        if (Bf::f(x.addr(), &Fmt::data).read_sign_extend() !=
+            sign_ext(saw2(F_w), F_w))
           return(false);
 
         x = ~uint64_t(0);
 
-        if (!Bf::zero(x.addr(), &Fmt::data))
+        if (!Bf::f(x.addr(), &Fmt::data).zero())
           return(false);
         if (x != ~(ones(F_w) << F_shift))
           return(false);
 
         const uint64_t y = ~(ones(F_w) << F_shift);
         x = y;
-        if (!Bf::write(x.addr(), &Fmt::data, saw(F_w)))
+        if (!Bf::f(x.addr(), &Fmt::data).write(saw(F_w)))
           return(false);
         if (x != ((saw(F_w) << F_shift) | y))
           return(false);
 
         x = y;
-        if (!Bf::write(x.addr(), &Fmt::data, saw2(F_w)))
+        Bf::f(x.addr(), &Fmt::data) = saw(F_w);
+        if (x != ((saw(F_w) << F_shift) | y))
+          return(false);
+
+        x = y;
+        if (!Bf::f(x.addr(), &Fmt::data).write(saw2(F_w)))
           return(false);
         if (x != ((saw2(F_w) << F_shift) | y))
           return(false);
 
-        if ((F_w != Bitfield_impl::Num_bits<typename Bf::Value_t>::Value) &&
-            Bf::write(x.addr(), &Fmt::data, uint64_t(1) << F_w))
+        const unsigned Value_bits = Bitfield_impl::Num_bits<Value_t>::Value;
+
+        if ((F_w != Value_bits) &&
+            Bf::f(x.addr(), &Fmt::data).write(uint64_t(1) << F_w))
+          return(false);
+
+        x = Saw;
+        if (!Bf::f(x.addr(), &Fmt::data).b_comp())
+          return(false);
+        if (x != (Saw ^ (Bitfield_impl::mask<uint64_t>(F_w) << F_shift)))
+          return(false);
+
+        x = Saw3;
+        if (!Bf::f(x.addr(), &Fmt::data).b_and(saw(F_w, Saw3)))
+          return(false);
+        if (x !=
+            (((saw(F_w, Saw3) << F_shift) |
+              ~(Bitfield_impl::mask<uint64_t>(F_w) << F_shift)) & Saw3))
+          return(false);
+
+        x = Saw3;
+        Bf::f(x.addr(), &Fmt::data) &= saw(F_w, Saw3);
+        if (x !=
+            (((saw(F_w, Saw3) << F_shift) |
+              ~(Bitfield_impl::mask<uint64_t>(F_w) << F_shift)) & Saw3))
+          return(false);
+
+        x = Saw3;
+        if (!Bf::f(x.addr(), &Fmt::data).b_or(saw(F_w, Saw3)))
+          return(false);
+        if (x != ((saw(F_w, Saw3) << F_shift) | Saw3))
+          return(false);
+
+        x = Saw3;
+        Bf::f(x.addr(), &Fmt::data) |= saw(F_w, Saw3);
+        if (x != ((saw(F_w, Saw3) << F_shift) | Saw3))
+          return(false);
+
+        x = Saw3;
+        if (!Bf::f(x.addr(), &Fmt::data).b_xor(saw(F_w, Saw3)))
+          return(false);
+        if (x != ((saw(F_w, Saw3) << F_shift) ^ Saw3))
+          return(false);
+
+        x = Saw3;
+        Bf::f(x.addr(), &Fmt::data) ^= saw(F_w, Saw3);
+        if (x != ((saw(F_w, Saw3) << F_shift) ^ Saw3))
           return(false);
 
         return(true);
       }
   };
 
-template <class Bf, unsigned Ofs, unsigned W>
-class Test_2f : private Test_2f<Bf, Ofs - 1, W>
-  {
-    One_test_2f<Bf, Format<Ofs, W> > t;
-  };
+#define TEST_2F_1(BF, OFS, W) \
+One_test_2f<BF, Format<OFS, W> > test_2f_ ## BF ## OFS ## _ ## W;
 
-template <class Bf, unsigned W>
-class Test_2f<Bf, 0, W> : private Test_2f<Bf, 32, W - 1>
-  {
-    One_test_2f<Bf, Format<0, W> > t;
-  };
+#define TEST_2F_2(BF, OFS) \
+TEST_2F_1(BF, OFS, 1) \
+TEST_2F_1(BF, OFS, 2) \
+TEST_2F_1(BF, OFS, 3) \
+TEST_2F_1(BF, OFS, 4) \
+TEST_2F_1(BF, OFS, 5) \
+TEST_2F_1(BF, OFS, 6) \
+TEST_2F_1(BF, OFS, 7) \
+TEST_2F_1(BF, OFS, 8) \
+TEST_2F_1(BF, OFS, 9) \
+TEST_2F_1(BF, OFS, 10) \
+TEST_2F_1(BF, OFS, 11) \
+TEST_2F_1(BF, OFS, 12) \
+TEST_2F_1(BF, OFS, 13) \
+TEST_2F_1(BF, OFS, 14) \
+TEST_2F_1(BF, OFS, 15) \
+TEST_2F_1(BF, OFS, 16) \
+TEST_2F_1(BF, OFS, 17) \
+TEST_2F_1(BF, OFS, 18) \
+TEST_2F_1(BF, OFS, 19) \
+TEST_2F_1(BF, OFS, 20) \
+TEST_2F_1(BF, OFS, 21) \
+TEST_2F_1(BF, OFS, 22) \
+TEST_2F_1(BF, OFS, 23) \
+TEST_2F_1(BF, OFS, 24) \
+TEST_2F_1(BF, OFS, 25) \
+TEST_2F_1(BF, OFS, 26) \
+TEST_2F_1(BF, OFS, 27) \
+TEST_2F_1(BF, OFS, 28) \
+TEST_2F_1(BF, OFS, 29) \
+TEST_2F_1(BF, OFS, 30) \
+TEST_2F_1(BF, OFS, 31) \
+TEST_2F_1(BF, OFS, 32)
 
-template <class Bf>
-class Test_2f<Bf, 32, 0> { };
-
-#define OFFSET_TEST_ONLY 0
-#define QUICK_TEST 0
-
-#if !OFFSET_TEST_ONLY 
+#define TEST_2F(BF) \
+TEST_2F_2(BF, 0) \
+TEST_2F_2(BF, 1) \
+TEST_2F_2(BF, 2) \
+TEST_2F_2(BF, 3) \
+TEST_2F_2(BF, 4) \
+TEST_2F_2(BF, 5) \
+TEST_2F_2(BF, 6) \
+TEST_2F_2(BF, 7) \
+TEST_2F_2(BF, 8) \
+TEST_2F_2(BF, 9) \
+TEST_2F_2(BF, 10) \
+TEST_2F_2(BF, 11) \
+TEST_2F_2(BF, 12) \
+TEST_2F_2(BF, 13) \
+TEST_2F_2(BF, 14) \
+TEST_2F_2(BF, 15) \
+TEST_2F_2(BF, 16) \
+TEST_2F_2(BF, 17) \
+TEST_2F_2(BF, 18) \
+TEST_2F_2(BF, 19) \
+TEST_2F_2(BF, 20) \
+TEST_2F_2(BF, 21) \
+TEST_2F_2(BF, 22) \
+TEST_2F_2(BF, 23) \
+TEST_2F_2(BF, 24) \
+TEST_2F_2(BF, 25) \
+TEST_2F_2(BF, 26) \
+TEST_2F_2(BF, 27) \
+TEST_2F_2(BF, 28) \
+TEST_2F_2(BF, 29) \
+TEST_2F_2(BF, 30) \
+TEST_2F_2(BF, 31) \
+TEST_2F_2(BF, 32)
 
 typedef Bitfield<Bitfield_traits_default<uint32_t, uint8_t> > Bf8_ls;
 
-Test_2f<Bf8_ls, 32, 32> t_2f_8_ls;
+TEST_2F(Bf8_ls)
 
 #if !QUICK_TEST
 
 typedef Bitfield<Bitfield_traits_default<uint32_t, uint16_t> > Bf16_ls;
 
-Test_2f<Bf16_ls, 32, 32> t_2f_16_ls;
-
 typedef Bitfield<Bitfield_traits_default<uint32_t> > Bf32_ls;
 
-Test_2f<Bf32_ls, 32, 32> t_2f_32_ls;
+TEST_2F(Bf32_ls)
 
 #endif
 
@@ -249,21 +463,45 @@ struct Bitfield_traits_ms : public Bitfield_traits_default<V_t, S_t>
 
 typedef Bitfield<Bitfield_traits_ms<uint32_t, uint8_t> > Bf8_ms;
 
-Test_2f<Bf8_ms, 32, 32> t_2f_8_ms;
+TEST_2F(Bf8_ms)
 
 #if !QUICK_TEST
 
 typedef Bitfield<Bitfield_traits_ms<uint32_t, uint16_t> > Bf16_ms;
 
-Test_2f<Bf16_ms, 32, 32> t_2f_16_ms;
+TEST_2F(Bf16_ms)
 
 typedef Bitfield<Bitfield_traits_ms<uint32_t, uint32_t> > Bf32_ms;
 
-Test_2f<Bf32_ms, 32, 32> t_2f_32_ms;
+TEST_2F(Bf32_ms)
 
 #endif
 
-#endif // !OFFSET_TEST_ONLY
+#endif // !NO_2F
+
+class Test_value_mask : private Test_base
+  {
+    typedef Bitfield<Bitfield_traits_default<uint32_t> > Bf;
+
+    virtual bool test()
+      {
+        if (Bf::mask(0) != 0)
+          return(false);
+
+        if (Bf::mask(1) != 1)
+          return(false);
+
+        if (Bf::mask(19) != ((1 << 19) - 1))
+          return(false);
+
+        if (Bf::mask(32) != ~uint32_t(0))
+          return(false);
+
+        return(true);
+      }
+  };
+
+Test_value_mask test_value_mask;
 
 class Test_field_offset : private Test_base
   {
@@ -316,6 +554,25 @@ class Test_field_offset : private Test_base
 
         if (FOFS(Bwf, e[2], base_ofs) != oe2)
           return(false);
+
+        typename Bf::Storage_t base[1];
+
+        if (Bwf::Fmt_offset_from_start && Bwf::Fmt_align_at_zero_offset)
+          {
+            if (BITF_CAT(Bwf, base, b, e[1]).offset() != (ob - base_ofs))
+              return(false);
+
+            if (BITF_CAT(Bwf, base, b, e[1]).width() != (oe2 - ob))
+              return(false);
+          }
+        else if (!Bwf::Fmt_offset_from_start && Bwf::Fmt_align_at_zero_offset)
+          {
+            if (BITF_CAT(Bwf, base, b, e[0]).offset() != (oe0 - base_ofs))
+              return(false);
+
+            if (BITF_CAT(Bwf, base, b, e[0]).width() != (oa - oe0))
+              return(false);
+          }
 
         return(true);
       }
@@ -375,10 +632,10 @@ class Test_base_offset : private Test_base
 
     class C : public Bitfield_format { F<27> x; };
 
-    class D1 { public: A a; B b; C c; Bitfield_format::F<8> y; };
+    class D1 { BITF_DEF_F public: A a; B b; C c; F<8> y; };
 
     class D2 : public A, public B, public C
-      { Bitfield_format::F<8> y; };
+      { F<8> y; };
 
     struct Bft2 : public Bitfield_traits_default<uint16_t>
       {
@@ -436,3 +693,665 @@ class Test_base_offset : private Test_base
   };
 
 Test_base_offset test_base_offset;
+
+namespace Test_write_seq
+{
+
+const int Op_read = -1;
+const int Op_write = -2;
+const int Op_offset = -3;
+
+std::vector<int> op;
+
+unsigned check_idx;
+
+void check_op(int v)
+  {
+    if (op[check_idx] != v)
+      {
+        cout << "FAIL Test_write_seq::check_op() "
+             << "check_idx=" << check_idx << " expected=" << op[check_idx]
+             << " actual=" << v << '\n';
+        exit(1);
+      }
+
+    ++check_idx;
+  }
+
+bool reset_op()
+  {
+    if (check_idx != op.size())
+      {
+        cout << "FAIL Test_write_seq::reset_op() "
+             << "check_idx=" << check_idx << " size=" << op.size() << '\n';
+        return(false);
+      }
+
+    op.resize(0);
+    check_idx = 0;
+
+    return(true);
+  }
+
+struct Dummy_sa_t
+  {
+    typedef uint16_t Storage_t;
+
+    void operator += (unsigned offset)
+      { check_op(Op_offset); check_op(int(offset)); }
+
+    uint16_t read() { check_op(Op_read); return(0); }
+
+    void write(uint16_t) { check_op(Op_write); }
+  };
+
+Dummy_sa_t dsa_;
+
+template <class Traits = Bitfield_seq_storage_write_default_traits>
+struct Bft_ : public Bitfield_traits_default<uint32_t, uint16_t>
+  {
+    typedef Bitfield_seq_storage_write_t<Dummy_sa_t, Traits> Storage_access_t;
+  };
+
+namespace T1
+{
+
+class Fmt : private Bitfield_format
+  {
+  public:
+
+    F<1> f[3 * 16];
+  };
+
+typedef
+  Bitfield_w_fmt<Bitfield_traits_default<uint32_t, uint16_t>, Fmt> Bwf_def;
+
+typedef Bft_<> Bft;
+
+typedef Bitfield_w_fmt<Bitfield<Bft>, Fmt> Bwf;
+
+class Test : private Test_base
+  {
+    virtual bool test()
+      {
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f[0]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+
+          BITF_CAT(Bwf, dsa, f[0], f[7]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+
+          BITF_CAT(Bwf, dsa, f[0], f[15]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+
+          BITF_CAT(Bwf, dsa, f[0], f[16]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+
+          BITF_CAT(Bwf, dsa, f[0], f[30]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+
+          BITF_CAT(Bwf, dsa, f[0], f[31]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f[1]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+
+          BITF_CAT(Bwf, dsa, f[1], f[7]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+
+          BITF_CAT(Bwf, dsa, f[1], f[15]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+
+          BITF_CAT(Bwf, dsa, f[1], f[16]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+
+          BITF_CAT(Bwf, dsa, f[1], f[30]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(2);
+          op.push_back(Op_write);
+
+          BITF_CAT(Bwf, dsa, f[1], f[32]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f[15]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+
+          BITF_CAT(Bwf, dsa, f[15], f[16]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+
+          BITF_CAT(Bwf, dsa, f[15], f[30]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(2);
+          op.push_back(Op_write);
+
+          BITF_CAT(Bwf, dsa, f[15], f[32]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(2);
+          op.push_back(Op_write);
+
+          BITF_CAT(Bwf, dsa, f[15], f[46]) = 0;
+        }
+        if (!reset_op())
+          return(false);
+
+        return(true);
+      }
+  };
+
+Test t;
+
+} // end namespce T1
+
+namespace T2
+{
+
+class Fmt : private Bitfield_format
+  {
+  public:
+
+    F<5> f1;
+    F<15> f2;
+    F<8> f3;
+    F<18> f4;
+    F<22> f5;
+    F<4> f6;
+    F<8> f7;
+  };
+
+typedef
+  Bitfield_w_fmt<Bitfield_traits_default<uint32_t, uint16_t>, Fmt> Bwf_def;
+
+struct Ssw_traits : public Bitfield_seq_storage_write_default_traits
+  {
+    enum { First_bit = BITF_OFFSET(Bwf_def, f2) };
+    enum { End_bit = BITF_OFFSET(Bwf_def, f7) };
+  };
+
+static unsigned po = 0xabcd, no = 0xabcd;
+
+struct Ssw_traits2 : public Bitfield_seq_storage_write_default_traits
+  {
+    static void handle_backwards(
+      unsigned previous_offset, unsigned next_offset)
+      {
+        po = previous_offset;
+        no = next_offset;
+      }
+  };
+
+class Test : private Test_base
+  {
+    virtual bool test()
+      {
+        {
+          typedef Bft_<> Bft;
+
+          typedef Bitfield_w_fmt<Bitfield<Bft>, Fmt> Bwf;
+
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f2) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f4) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(2);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f6) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(4);
+          op.push_back(Op_write);
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          typedef Bft_<Ssw_traits> Bft;
+
+          typedef Bitfield_w_fmt<Bitfield<Bft>, Fmt> Bwf;
+
+          Bitfield_seq_storage_write_buf<Dummy_sa_t, Ssw_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_read);
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f2) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f4) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(2);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(4);
+          op.push_back(Op_read);
+
+          BITF(Bwf, dsa, f6) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(4);
+          op.push_back(Op_write);
+        }
+        if (!reset_op())
+          return(false);
+
+        {
+          typedef Bft_<Ssw_traits2> Bft;
+
+          typedef Bitfield_w_fmt<Bitfield<Bft>, Fmt> Bwf;
+
+          Bitfield_seq_storage_write_buf<Dummy_sa_t, Ssw_traits2> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f4) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(0);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f2) = 0;
+
+          if ((po != 2) or (no != 0))
+            return(false);
+
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+        }
+        if (!reset_op())
+          return(false);
+
+        return(true);
+      }
+  };
+
+Test t;
+
+} // end namespce T2
+
+namespace T3
+{
+
+class Fmt : private Bitfield_format
+  {
+  public:
+
+    F<21> f1;
+    F<15> f2;
+    F<8> f3;
+    F<18> f4;
+    F<22> f5;
+    F<4> f6;
+    F<24> f7;
+  };
+
+typedef
+  Bitfield_w_fmt<Bitfield_traits_default<uint32_t, uint16_t>, Fmt> Bwf_def;
+
+struct Ssw_traits : public Bitfield_seq_storage_write_default_traits
+  {
+    enum { First_bit = BITF_OFFSET(Bwf_def, f2) };
+    enum { End_bit = BITF_OFFSET(Bwf_def, f7) };
+
+    static const bool Flush_on_destroy = false;
+  };
+
+class Test : private Test_base
+  {
+    virtual bool test()
+      {
+        {
+          typedef Bft_<> Bft;
+
+          typedef Bitfield_w_fmt<Bitfield<Bft>, Fmt> Bwf;
+
+          Bitfield_seq_storage_write_buf<
+            Dummy_sa_t, Bitfield_seq_storage_write_default_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f2) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(2);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f4) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(3);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f6) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(5);
+          op.push_back(Op_write);
+
+          if (check_idx >= op.size())
+            return(false);
+
+          dsa.flush();
+
+          if (!reset_op())
+            return(false);
+        }
+
+        {
+          typedef Bft_<Ssw_traits> Bft;
+
+          typedef Bitfield_w_fmt<Bitfield<Bft>, Fmt> Bwf;
+
+          Bitfield_seq_storage_write_buf<Dummy_sa_t, Ssw_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_read);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f2) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(2);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f4) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(3);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(5);
+          op.push_back(Op_read);
+
+          BITF(Bwf, dsa, f6) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(5);
+          op.push_back(Op_write);
+
+          dsa.flush();
+
+          if (!reset_op())
+            return(false);
+        }
+
+        {
+          typedef Bft_<Ssw_traits> Bft;
+
+          typedef Bitfield_w_fmt<Bitfield<Bft>, Fmt> Bwf;
+
+          Bitfield_seq_storage_write_buf<Dummy_sa_t, Ssw_traits> dsa(dsa_);
+
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_read);
+          op.push_back(Op_offset);
+          op.push_back(1);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f2) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(2);
+          op.push_back(Op_write);
+
+          BITF(Bwf, dsa, f4) = 0;
+
+          op.push_back(Op_offset);
+          op.push_back(3);
+          op.push_back(Op_write);
+          op.push_back(Op_offset);
+          op.push_back(5);
+          op.push_back(Op_read);
+
+          BITF(Bwf, dsa, f6) = 0;
+
+          dsa.discard();
+
+          if (!reset_op())
+            return(false);
+        }
+
+        return(true);
+      }
+  };
+
+Test t;
+
+} // end namespce T3
+
+} // end namespace Test_write_seq

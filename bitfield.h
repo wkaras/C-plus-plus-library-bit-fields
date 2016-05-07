@@ -17,12 +17,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+// Usage documentation in Bitfield.html/Bitfield.pdf .
+
 #ifndef BITFIELD_H_20160428
 #define BITFIELD_H_20160428
 
 #include <limits.h> // For definition of CHAR_BIT.
 
-// PENDING:  noexcept usage.
+#include <cstddef> // For definition of offsetof.
+
+// noexcept Use -- Since all the functions here are inlined, I'm assuming
+// it's not important to conditionally make any of them noexcept based on:
+// https://waltsgeekblog.quora.com/G++-inline-and-noexcept
 
 // Names defined in this namespace should not be used outside this
 // header file.
@@ -51,25 +57,16 @@ inline U mask(unsigned bit_width)
     return((U(1) << bit_width) - 1);
   }
 
-template <typename Value_t, typename Storage_t>
-struct Checks
-  {
-    static bool is_field_too_wide(unsigned field_width)
-      { return(field_width > Num_bits<Value_t>::Value); }
-
-    static bool is_value_too_big(Value_t v, unsigned field_width)
-      {
-        if (field_width == Num_bits<Value_t>::Value)
-          return(false);
-
-        return(v > mask<Value_t>(field_width));
-      }
-  };
-
-template <typename Storage_read_t, typename Storage_t>
+template <typename Storage_access_t, typename Storage_t>
 inline Storage_t ls_read_s(
-  Storage_read_t base, unsigned first_bit, unsigned field_width)
+  Storage_access_t base, unsigned first_bit, unsigned field_width)
   { return((base.read() >> first_bit) & mask<Storage_t>(field_width)); }
+
+// Even if you are not David Byrne, you may ask youself, why use the
+// recursive class templates Ls_read/Ms_read/Ls_modify/Ms_modify?  Why not
+// simply use (non-templeted) recursive functions?  The reason is the GCC
+// seems to find it easier to fully optimize (for execution path length)
+// when the recursive class templates are used.
 
 template <class Bitfield_traits, unsigned Depth>
 struct Ls_read
@@ -78,20 +75,20 @@ struct Ls_read
 
     typedef typename Bitfield_traits::Storage_t Storage_t;
 
-    typedef typename Bitfield_traits::Storage_read_t Storage_read_t;
+    typedef typename Bitfield_traits::Storage_access_t Storage_access_t;
 
     static const unsigned Storage_bits = Num_bits<Storage_t>::Value;
 
     static Value_t x(
-      Storage_read_t base, unsigned first_bit, unsigned field_width)
+      Storage_access_t base, unsigned first_bit, unsigned field_width)
       {
         if ((first_bit + field_width) <= Storage_bits)
           return(
-            ls_read_s<Storage_read_t, Storage_t>(
+            ls_read_s<Storage_access_t, Storage_t>(
               base, first_bit, field_width));
 
         Value_t v =
-          ls_read_s<Storage_read_t, Storage_t>(
+          ls_read_s<Storage_access_t, Storage_t>(
             base, first_bit, Storage_bits - first_bit);
 
         base += 1;
@@ -106,13 +103,13 @@ template <class Bitfield_traits>
 struct Ls_read<Bitfield_traits, Max_value_to_storage_bits_ratio + 1>
   {
     static typename Bitfield_traits::Value_t x(
-      typename Bitfield_traits::Storage_read_t, unsigned, unsigned)
+      typename Bitfield_traits::Storage_access_t, unsigned, unsigned)
       { return(0); }
   };
 
-template <typename Storage_read_t, typename Storage_t>
+template <typename Storage_access_t, typename Storage_t>
 inline Storage_t ms_read_s(
-  Storage_read_t base, unsigned first_bit, unsigned field_width)
+  Storage_access_t base, unsigned first_bit, unsigned field_width)
   {
     return(
       (base.read() >> (Num_bits<Storage_t>::Value - first_bit - field_width)) &
@@ -126,22 +123,22 @@ struct Ms_read
 
     typedef typename Bitfield_traits::Storage_t Storage_t;
 
-    typedef typename Bitfield_traits::Storage_read_t Storage_read_t;
+    typedef typename Bitfield_traits::Storage_access_t Storage_access_t;
 
     static const unsigned Storage_bits = Num_bits<Storage_t>::Value;
 
     static Value_t x(
-      Storage_read_t base, unsigned first_bit, unsigned field_width)
+      Storage_access_t base, unsigned first_bit, unsigned field_width)
       {
         if ((first_bit + field_width) <= Storage_bits)
           return(
-            ms_read_s<Storage_read_t, Storage_t>(
+            ms_read_s<Storage_access_t, Storage_t>(
               base, first_bit, field_width));
 
         field_width -= Storage_bits - first_bit;
 
         Value_t v =
-          ms_read_s<Storage_read_t, Storage_t>(
+          ms_read_s<Storage_access_t, Storage_t>(
             base, first_bit, Storage_bits - first_bit) << field_width;
 
         base += 1;
@@ -155,7 +152,7 @@ template <class Bitfield_traits>
 struct Ms_read<Bitfield_traits, Max_value_to_storage_bits_ratio + 1>
   {
     static typename Bitfield_traits::Value_t x(
-      typename Bitfield_traits::Storage_read_t, unsigned, unsigned)
+      typename Bitfield_traits::Storage_access_t, unsigned, unsigned)
       { return(0); }
   };
 
@@ -242,27 +239,16 @@ struct Ms_modify<Bitfield_traits, Modifier, Max_value_to_storage_bits_ratio + 1>
       { }
   };
 
-template<typename V_t>
+template<typename Value_t>
 struct Err_act_default
   {
     static void field_too_wide(unsigned /* field_width */) { }
-    static void value_too_big(V_t /* v */, unsigned /* field_width */) { }
+    static void value_too_big(Value_t /* v */, unsigned /* field_width */) { }
   };
-
-template <typename T, bool Make_const>
-struct Constipate;
-
-template <typename T>
-struct Constipate<T, true> { typedef const T Type; };
-
-template <typename T>
-struct Constipate<T, false> { typedef T Type; };
 
 } // namespace Bitfield_impl
 
-template <
-  typename V_t, typename S_t = V_t,
-  class Err_act = Bitfield_impl::Err_act_default<V_t> >
+template <typename V_t = unsigned, typename S_t = V_t>
 class Bitfield_traits_default
   {
   public:
@@ -271,103 +257,49 @@ class Bitfield_traits_default
 
     typedef S_t Storage_t;
 
-    template <bool Is_const>
-    class Storage_access_base
+    class Storage_access_t
       {
-      protected:
-
-        typedef
-          typename Bitfield_impl::Constipate<Storage_t, Is_const>::Type CS_t;
-
       public:
 
-        Storage_access_base(CS_t *p) : ptr(p) { }
+        typedef S_t Storage_t;
+
+        Storage_access_t(Storage_t *p) : ptr(p) { }
 
         void operator += (unsigned offset) { ptr += offset; }
 
         Storage_t read() { return(*ptr); }
 
-      protected:
+        void write(Storage_t t) { *ptr = t; }
 
-        CS_t *ptr;
-
-      };
-
-    typedef Storage_access_base<true> Storage_read_t;
-
-    class Storage_access_t : public Storage_access_base<false>
-      {
       private:
 
-        typedef Storage_access_base<false> Base;
+        Storage_t *ptr;
 
-      public:
-
-        Storage_access_t(Storage_t *p) : Base(p) { }
-
-        void write(Storage_t t) { *Base::ptr = t; }
-
-        operator Storage_read_t () { return(Storage_read_t(Base::ptr)); }
       };
 
     static const bool Storage_ls_bit_first = true;
-
-    static bool check_width(unsigned field_width)
-      {
-        if (Bf_checks::is_field_too_wide(field_width))
-          {
-            Err_act::field_too_wide(field_width);
-
-            return(false);
-          }
-
-        return(true);
-      }
-
-    static bool check_fit(Value_t v, unsigned field_width)
-      {
-        if (Bf_checks::is_value_too_big(v, field_width))
-          {
-            Err_act::value_too_big(v, field_width);
-
-            return(false);
-          }
-
-        return(true);
-      }
 
     static const bool Fmt_offset_from_start = true;
 
     static const bool Fmt_align_at_zero_offset = true;
 
-  private:
-
-    typedef Bitfield_impl::Checks<V_t, S_t> Bf_checks;
-
   }; // class Bitfields_traits_default
 
-struct Bitfield_format
-  {
-    template <unsigned Width>
-    struct F { char x[Width]; };
-  };
+#define BITF_DEF_F \
+template <unsigned BITF_WIDTH> struct F { char x[BITF_WIDTH]; };
 
-template <class Bitfield_traits = Bitfield_traits_default<unsigned> >
+struct Bitfield_format { BITF_DEF_F };
+
+template <
+  class Traits = Bitfield_traits_default<unsigned>,
+  class Err_act = Bitfield_impl::Err_act_default<typename Traits::Value_t> >
 class Bitfield
-  : public
-      Bitfield_impl::Checks<
-        typename Bitfield_traits::Value_t,
-        typename Bitfield_traits::Storage_t>
   {
   public:
-
-    typedef Bitfield_traits Traits;
 
     typedef typename Traits::Value_t Value_t;
 
     typedef typename Traits::Storage_t Storage_t;
-
-    typedef typename Traits::Storage_read_t Storage_read_t;
 
     typedef typename Traits::Storage_access_t Storage_access_t;
 
@@ -381,47 +313,21 @@ class Bitfield
     static const unsigned Storage_bits =
       Bitfield_impl::Num_bits<Storage_t>::Value;
 
-    static Value_t read(
-      Storage_read_t base, unsigned first_bit, unsigned field_width)
+    template<class Format>
+    struct Define
       {
-        if (!Traits::check_width(field_width))
-          return(~(Value_t(0)));
+        static const unsigned Storage_bits =
+          Bitfield_impl::Num_bits<Storage_t>::Value;
 
-        base += (first_bit / Storage_bits);
-        first_bit %= Storage_bits;
+        static const unsigned Dimension =
+          (sizeof(Format) + Storage_bits - 1) / Storage_bits;
 
-        if (Traits::Storage_ls_bit_first)
-          return(
-            Bitfield_impl::Ls_read<Bitfield_traits, 0>::x(
-              base, first_bit, field_width));
+        typedef Storage_t T[Dimension];
+      };
 
-        return(
-          Bitfield_impl::Ms_read<Bitfield_traits, 0>::x(
-            base, first_bit, field_width));
-      }
-
-    template <class Modifier>
-    static bool modify(
-      Storage_access_t base, unsigned first_bit, unsigned field_width,
-      Modifier m)
+    static Value_t mask(unsigned field_width)
       {
-        if (!Traits::check_width(field_width))
-          return(false);
-
-        if (!Traits::check_fit(m.value(), field_width))
-          return(false);
-
-        base += (first_bit / Storage_bits);
-        first_bit %= Storage_bits;
-
-        if (Traits::Storage_ls_bit_first)
-          Bitfield_impl::Ls_modify<Bitfield_traits, Modifier, 0>::x(
-            base, first_bit, 0, field_width, m);
-        else
-          Bitfield_impl::Ms_modify<Bitfield_traits, Modifier, 0>::x(
-            base, first_bit, field_width, m);
-
-        return(true);
+        return(Bitfield_impl::mask<Value_t>(field_width));
       }
 
     class Modifier_base
@@ -457,6 +363,200 @@ class Bitfield
         const Value_t val;
       };
 
+    class Bf
+      {
+      private:
+
+        const Storage_access_t base;
+
+        const unsigned short first_bit, field_width;
+
+      public:
+
+        Bf(
+          Storage_access_t base_, unsigned short first_bit_,
+          unsigned short field_width_)
+          : base(base_), first_bit(first_bit_), field_width(field_width_)
+          { }
+
+        unsigned short offset() { return(first_bit); }
+
+        unsigned short width() { return(field_width); }
+
+        bool is_width_invalid()
+          {
+            return((field_width == 0) ||
+                   (field_width > Bitfield_impl::Num_bits<Value_t>::Value));
+          }
+
+        Value_t read()
+          {
+            if (!check_width())
+              return(~(Value_t(0)));
+
+            Storage_access_t access(base);
+            access += (first_bit / Storage_bits);
+
+            if (Traits::Storage_ls_bit_first)
+              return(
+                Bitfield_impl::Ls_read<Traits, 0>::x(
+                  access, first_bit % Storage_bits, field_width));
+
+            return(
+              Bitfield_impl::Ms_read<Traits, 0>::x(
+                access, first_bit % Storage_bits, field_width));
+          }
+
+        operator Value_t () { return(read()); }
+
+        Value_t read_sign_extend()
+          {
+            Value_t v = read();
+
+            if (field_width)
+              {
+                Value_t m = ~mask(field_width - 1);
+
+                if (m & v)
+                  v |= m;
+              }
+
+            return(v);
+          }
+
+        template <class Modifier>
+        bool modify_nvc(Modifier m)
+          {
+            if (!check_width())
+              return(false);
+
+            Storage_access_t access(base);
+            access += (first_bit / Storage_bits);
+
+            if (Traits::Storage_ls_bit_first)
+              Bitfield_impl::Ls_modify<Traits, Modifier, 0>::x(
+                access, first_bit % Storage_bits, 0, field_width, m);
+            else
+              Bitfield_impl::Ms_modify<Traits, Modifier, 0>::x(
+                access, first_bit % Storage_bits, field_width, m);
+
+            return(true);
+          }
+
+        template <class Modifier>
+        bool modify(Modifier m)
+          {
+            if (!check_fit(m.value()))
+              return(false);
+
+            return(modify_nvc(m));
+          }
+
+        bool write(Value_t val) { return(modify(Mod_write(val))); }
+
+        Value_t operator = (Value_t val) { write(val); return(val); }
+
+        bool write_nvc(Value_t val) { return(modify_nvc(Mod_write(val))); }
+
+        bool zero() { return(modify_nvc(Mod_zero())); }
+
+        bool b_and(Value_t val) { return(modify(Mod_and(val))); }
+
+        Bf & operator &= (Value_t val) { modify(Mod_and(val)); return(*this); }
+
+        bool b_and_nvc(Value_t val) { return(modify_nvc(Mod_and(val))); }
+
+        bool b_or(Value_t val) { return(modify(Mod_or(val))); }
+
+        Bf & operator |= (Value_t val) { modify(Mod_or(val)); return(*this); }
+
+        bool b_or_nvc(Value_t val) { return(modify_nvc(Mod_or(val))); }
+
+        bool b_xor(Value_t val) { return(modify(Mod_xor(val))); }
+
+        Bf & operator ^= (Value_t val) { modify(Mod_xor(val)); return(*this); }
+
+        bool b_xor_nvc(Value_t val) { return(modify_nvc(Mod_xor(val))); }
+
+        bool b_comp() { return(modify_nvc(Mod_comp())); }
+
+      private:
+
+        bool is_value_too_big(Value_t v)
+          {
+            if (field_width == Bitfield_impl::Num_bits<Value_t>::Value)
+              return(false);
+
+            return(v > mask(field_width));
+          }
+
+        bool check_width()
+          {
+            if (is_width_invalid())
+              {
+                Err_act::field_too_wide(field_width);
+
+                return(false);
+              }
+
+            return(true);
+          }
+
+        bool check_fit(Value_t v)
+          {
+            if (is_value_too_big(v))
+              {
+                Err_act::value_too_big(v, field_width);
+
+                return(false);
+              }
+
+            return(true);
+          }
+
+      }; // end class Bf
+
+    static Bf fn(
+      Storage_access_t base, unsigned first_bit, unsigned field_width)
+      { return(Bf(base, first_bit, field_width)); }
+
+    template<class Format, typename Mbr_type>
+    static unsigned field_width(Mbr_type Format::*)
+      { return(sizeof(Mbr_type)); }
+
+    template<class Format, typename Mbr_type>
+    static unsigned field_offset(
+      Mbr_type Format::*field, unsigned base_offset = 0)
+      {
+        unsigned offset =
+          reinterpret_cast<char *>(
+            &(reinterpret_cast<Format *>(0x100)->*field)) -
+           reinterpret_cast<char *>(0x100);
+
+        if (!Bitfield::Fmt_offset_from_start)
+          offset = sizeof(Format) - sizeof(Mbr_type) - offset;
+
+        // If base_offset is not zero, it's assumed that it already
+        // incorporates any offset to align the end of the containing
+        // structure with a Storage_t boundary.
+        //
+        if (!Bitfield::Fmt_align_at_zero_offset &&
+             ((sizeof(Format) % Storage_bits) != 0) &&
+             (base_offset == 0))
+          offset += Storage_bits - (sizeof(Format) % Storage_bits);
+
+        return(base_offset + offset);
+      }
+
+    template<class Format, typename Mbr_type>
+    static Bf f(
+      Storage_access_t base, Mbr_type Format::*field, unsigned offset = 0)
+      {
+        return(Bf(base, field_offset(field, offset), field_width(field)));
+      }
+
+  private:
+
     class Mod_zero : public Modifier_base
       {
       public:
@@ -466,10 +566,6 @@ class Bitfield
           unsigned storage_width)
           { s.write(this->clear(s, storage_shift, storage_width)); }
       };
-
-    static bool zero(
-      Storage_access_t base, unsigned first_bit, unsigned field_width)
-      { return(modify(base, first_bit, field_width, Mod_zero())); }
 
     class Mod_write : public Value_modifier_base
       {
@@ -490,85 +586,76 @@ class Bitfield
           }
       };
 
-    static bool write(
-      Storage_access_t base, unsigned first_bit, unsigned field_width,
-      Value_t val)
-      { return(modify(base, first_bit, field_width, Mod_write(val))); }
-
-    template<class Format>
-    struct Define
+    class Mod_and : public Value_modifier_base
       {
-        static const unsigned Storage_bits =
-          Bitfield_impl::Num_bits<Storage_t>::Value;
+      public:
 
-        static const unsigned Dimension =
-          (sizeof(Format) + Storage_bits - 1) / Storage_bits;
+        Mod_and(Value_t v) : Value_modifier_base(v) { }
 
-        typedef Storage_t T[Dimension];
+        void operator () (
+          Storage_access_t s, unsigned storage_shift, unsigned value_shift,
+          unsigned storage_width)
+          {
+            Storage_t x =
+              (Value_modifier_base::value() >> value_shift) << storage_shift;
+
+            x |=
+              ~(Bitfield_impl::mask<Storage_t>(storage_width) << storage_shift);
+
+
+            s.write(static_cast<Storage_t>(x & s.read()));
+          }
       };
 
-    template<class Format, unsigned Width>
-    static unsigned field_width(Bitfield_format::F<Width> Format::*)
-      { return(Width); }
-
-    template<class Format, unsigned Width>
-    static unsigned field_offset(
-      Bitfield_format::F<Width> Format::*field, unsigned base_offset = 0)
+    class Mod_or : public Value_modifier_base
       {
-        unsigned offset =
-          (reinterpret_cast<Format *>(0x100)->*field).x -
-           reinterpret_cast<char *>(0x100);
+      public:
 
-        if (!Bitfield::Fmt_offset_from_start)
-          offset = sizeof(Format) - Width - offset;
+        Mod_or(Value_t v) : Value_modifier_base(v) { }
 
-        // If base_offset is not zero, it's assumed that it already
-        // incorporates any offset to align the end of the containing
-        // structure with a Storage_t boundary.
-        //
-        if (!Bitfield::Fmt_align_at_zero_offset &&
-             ((sizeof(Format) % Storage_bits) != 0) &&
-             (base_offset == 0))
-          offset += Storage_bits - (sizeof(Format) % Storage_bits);
+        void operator () (
+          Storage_access_t s, unsigned storage_shift, unsigned value_shift,
+          unsigned)
+          {
+            Storage_t x =
+              (Value_modifier_base::value() >> value_shift) << storage_shift;
 
-        return(base_offset + offset);
-      }
+            s.write(static_cast<Storage_t>(x | s.read()));
+          }
+      };
 
-    template<class Format, unsigned Width>
-    static Value_t read(
-      Storage_read_t base, Bitfield_format::F<Width> Format::*field,
-      unsigned offset = 0)
+    class Mod_xor : public Value_modifier_base
       {
-        return(read(base, field_offset(field, offset), field_width(field)));
-      }
+      public:
 
-    template<class Format, unsigned Width, class Modifier>
-    static bool modify(
-      Storage_access_t base, Bitfield_format::F<Width> Format::*field,
-      Modifier m, unsigned offset = 0)
+        Mod_xor(Value_t v) : Value_modifier_base(v) { }
+
+        void operator () (
+          Storage_access_t s, unsigned storage_shift, unsigned value_shift,
+          unsigned)
+          {
+            Storage_t x =
+              (Value_modifier_base::value() >> value_shift) << storage_shift;
+
+            s.write(static_cast<Storage_t>(x ^ s.read()));
+          }
+      };
+
+    class Mod_comp : public Modifier_base
       {
-        return(
-          modify(base, field_offset(field, offset), field_width(field), m));
-      }
+      public:
 
-    template<class Format, unsigned Width>
-    static bool zero(
-      Storage_access_t base, Bitfield_format::F<Width> Format::*field,
-      unsigned offset = 0)
-      {
-        return(zero(base, field_offset(field, offset), field_width(field)));
-      }
-
-    template<class Format, unsigned Width>
-    static bool write(
-      Storage_access_t base, Bitfield_format::F<Width> Format::*field,
-      Value_t val, unsigned offset = 0)
-      {
-        return(
-          write(base, field_offset(field, offset), field_width(field), val));
-      }
-
-  protected:
+        void operator () (
+          Storage_access_t s, unsigned storage_shift, unsigned,
+          unsigned storage_width)
+          {
+            s.write(
+              static_cast<Storage_t>(
+                s.read() ^
+                (Bitfield_impl::mask<Storage_t>(storage_width)
+                   << storage_shift)));
+          }
+      };
 
     static const bool Uh_oh =
       Bitfield_impl::Num_bits<Value_t>::Value >
@@ -581,27 +668,30 @@ class Bitfield
 
   }; // class Bitfield
 
-template <class Bf, class Fmt>
-struct Bitfield_w_fmt : public Bf
+template <class Bitfield, class Fmt>
+struct Bitfield_w_fmt : public Bitfield
   {
-    static const unsigned Storage_bits = Bf::Storage_bits;
+    static const unsigned Storage_bits =
+      Bitfield_impl::Num_bits<typename Bitfield::Storage_t>::Value;
 
     template <class Base_fmt>
     static unsigned base_offset(unsigned derived_offset = 0)
       {
+        const unsigned Storage_bits = Bitfield::Storage_bits;
+
         const unsigned From_start_unaligned =
           reinterpret_cast<char *>(static_cast<Base_fmt *>(
             reinterpret_cast<Fmt *>(0x100))) - 
           reinterpret_cast<char *>(0x100);
 
         const unsigned Unaligned =
-          Bf::Fmt_offset_from_start ?
+          Bitfield::Fmt_offset_from_start ?
             From_start_unaligned :
             sizeof(Fmt) - sizeof(Base_fmt) - From_start_unaligned;
 
         return(
           Unaligned +
-          ((!Bf::Fmt_align_at_zero_offset &&
+          ((!Bitfield::Fmt_align_at_zero_offset &&
             ((sizeof(Fmt) % Storage_bits) != 0) &&
             (derived_offset == 0)) ?
              Storage_bits - (sizeof(Fmt) % Storage_bits) : derived_offset));
@@ -610,10 +700,22 @@ struct Bitfield_w_fmt : public Bf
     typedef Fmt Format;
   };
 
+#if 0
+
+// Standards prior to C++11 do not consider any expression with reintepret_cast
+// to be compile-time constants.
+
 #define BITF_OFFSET_FROM_START(BWF, FIELD_SPEC) \
   (reinterpret_cast<char *>( \
      &(reinterpret_cast<typename BWF::Format *>(0x100)->FIELD_SPEC)) - \
    reinterpret_cast<char *>(0x100))
+
+#else
+
+#define BITF_OFFSET_FROM_START(BWF, FIELD_SPEC) \
+  offsetof(typename BWF::Format, FIELD_SPEC)
+
+#endif
 
 #define BITF_WIDTH(BWF, FIELD_SPEC) \
   (sizeof(reinterpret_cast<typename BWF::Format *>(0x100)->FIELD_SPEC))
@@ -627,8 +729,12 @@ struct Bitfield_w_fmt : public Bf
     BITF_OFFSET_FROM_START(BWF, FIELD_SPEC) : \
     BITF_OFFSET_FROM_END(BWF, FIELD_SPEC))
 
-#define BITF_W_OFS(BWF, FIELD_SPEC, OFS) \
-  (BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC) + (OFS)), BITF_WIDTH(BWF, FIELD_SPEC)
+#define BITF_W_OFS_STD(BWF, BASE, FIELD_SPEC, OFS) \
+  BWF::fn((BASE), (BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC) + (OFS)), \
+          BITF_WIDTH(BWF, FIELD_SPEC))
+
+#define BITF_W_OFS_ALT(SEL, FIELD_SPEC, OFS) \
+  BITF_W_OFS_STD(BITF_U_##SEL##_BWF, (BITF_U_##SEL##_BASE), FIELD_SPEC, (OFS))
 
 #define BITF_OFFSET(BWF, FIELD_SPEC) \
   (BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC) + \
@@ -637,11 +743,237 @@ struct Bitfield_w_fmt : public Bf
             (BWF::Storage_bits - \
               (sizeof(typename BWF::Format) % BWF::Storage_bits)) : 0)))
 
-// Because C++ does not accept the syntax &C::x.b (where b is in a structure
-// x inside of class C), use BITF(C, x.b) as a more general way to get
-// a bit field's offset and width separated by a comma.
+#define BITF_STD(BWF, BASE, FIELD_SPEC) \
+  BWF::fn((BASE), BITF_OFFSET(BWF, FIELD_SPEC), BITF_WIDTH(BWF, FIELD_SPEC))
+
+#define BITF_ALT(SEL, FIELD_SPEC) \
+  BITF_STD(BITF_U_##SEL##_BWF, (BITF_U_##SEL##_BASE), FIELD_SPEC)
+
+// This macro is private -- not for direct use.
 //
-#define BITF(BWF, FIELD_SPEC) \
-  BITF_OFFSET(BWF, FIELD_SPEC), BITF_WIDTH(BWF, FIELD_SPEC)
+#define BITF_CAT_WIDTH_(LOW_FLD_OFFSET, HIGH_FLD_OFFSET, HIGH_FLD_WIDTH) \
+  ((HIGH_FLD_OFFSET) + (HIGH_FLD_WIDTH) - (LOW_FLD_OFFSET))
+
+#define BITF_CAT_WIDTH(BWF, FIELD_SPEC1, FIELD_SPEC2) \
+  (BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC1) > \
+   BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC2) ? \
+   BITF_CAT_WIDTH_( \
+     BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC2), \
+     BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC1), \
+     BITF_WIDTH(BWF, FIELD_SPEC1)) : \
+   BITF_CAT_WIDTH_( \
+     BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC1), \
+     BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC2), \
+     BITF_WIDTH(BWF, FIELD_SPEC2)))
+
+#define BITF_CAT_OFFSET(BWF, FIELD_SPEC1, FIELD_SPEC2) \
+  (BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC1) > \
+   BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC2) ? \
+   BITF_OFFSET(BWF, FIELD_SPEC2) : BITF_OFFSET(BWF, FIELD_SPEC1))
+
+#define BITF_CAT_STD(BWF, BASE, FIELD_SPEC1, FIELD_SPEC2) \
+  BWF::fn((BASE), BITF_CAT_OFFSET(BWF, FIELD_SPEC1, FIELD_SPEC2), \
+          BITF_CAT_WIDTH(BWF, FIELD_SPEC1, FIELD_SPEC2))
+
+#define BITF_CAT_ALT(SEL, FIELD_SPEC1, FIELD_SPEC2) \
+  BITF_CAT_STD(BITF_U_##SEL##_BWF, BITF_U_##SEL##_BASE, FIELD_SPEC1, \
+               FIELD_SPEC2)
+
+#define BITF_CAT_OFFSET_UNALIGNED(BWF, FIELD_SPEC1, FIELD_SPEC2) \
+  (BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC1) > \
+   BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC2) ? \
+   BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC2) : \
+   BITF_OFFSET_UNALIGNED(BWF, FIELD_SPEC1))
+
+#define BITF_CAT_W_OFS_STD(BWF, BASE, FIELD_SPEC1, FIELD_SPEC2, OFFSET) \
+  BWF::fn((BASE), \
+    BITF_CAT_OFFSET_UNALIGNED(BWF, FIELD_SPEC1, FIELD_SPEC2) + (OFFSET), \
+    BITF_CAT_WIDTH(BWF, FIELD_SPEC1, FIELD_SPEC2))
+
+#define BITF_CAT_W_OFS_ALT(SEL, FIELD_SPEC1, FIELD_SPEC2, OFS) \
+  BITF_CAT_W_OFS_STD(BITF_U_##SEL##_BWF, (BITF_U_##SEL##_BASE), FIELD_SPEC1, \
+                     FIELD_SPEC2, OFS)
+
+#if defined(BITF_USE_ALT)
+
+#define BITF BITF_ALT
+#define BITF_W_OFS BITF_W_OFS_ALT
+#define BITF_CAT BITF_CAT_ALT
+#define BITF_CAT_W_OFS BITF_CAT_W_OFS_ALT
+
+#else
+
+#define BITF BITF_STD
+#define BITF_W_OFS BITF_W_OFS_STD
+#define BITF_CAT BITF_CAT_STD
+#define BITF_CAT_W_OFS BITF_CAT_W_OFS_STD
+
+#endif
+
+class Bitfield_seq_storage_write_default_traits
+  {
+  public:
+
+    static const bool Flush_on_destroy = true;
+
+    static const unsigned First_bit = 0;
+
+    static const unsigned End_bit = ~unsigned(0);
+
+    static void handle_backwards(
+      unsigned /* previous_offset */, unsigned /* next_offset */)
+      { }
+  };
+
+template <
+  class Storage_access_t,
+  class Traits = Bitfield_seq_storage_write_default_traits>
+class Bitfield_seq_storage_write_t;
+
+template <
+  class Storage_access_t,
+  class Traits = Bitfield_seq_storage_write_default_traits>
+class Bitfield_seq_storage_write_buf
+  {
+  friend class Bitfield_seq_storage_write_t<Storage_access_t, Traits>;
+
+  public:
+
+    typedef typename Storage_access_t::Storage_t Storage_t;
+
+    Bitfield_seq_storage_write_buf(Storage_access_t sa_)
+      : sa(sa_), buffer_status(Empty)
+      { }
+
+    void flush()
+      {
+        if (buffer_status == Write_needed)
+          {
+            // Do this first in case of exception.
+            buffer_status = No_read_needed;
+
+            Storage_access_t sa_(sa);
+
+            sa_ += buffer_offset;
+
+            sa_.write(buffer);
+          }
+      }
+
+    void discard() { buffer_status = Empty; }
+
+    ~Bitfield_seq_storage_write_buf()
+      {
+        if (Traits::Flush_on_destroy)
+          flush();
+      }
+
+  private:
+
+    Storage_t read(unsigned offset)
+      {
+        handle_buffer(offset);
+
+        if (buffer_status == Empty)
+          {
+            if (((First_storage_offset != ~unsigned(0)) and
+                 (offset <= First_storage_offset)) or
+                (offset >= Last_storage_offset))
+              {
+                Storage_access_t sa_(sa);
+
+                sa_ += offset;
+
+                buffer = sa_.read();
+              }
+            else
+              buffer = 0;
+
+            buffer_status = No_read_needed;
+            buffer_offset = offset;
+          }
+
+        return(buffer);
+      }
+
+    void write(unsigned offset, Storage_t t)
+      {
+        handle_buffer(offset);
+
+        buffer = t;
+
+        buffer_status = Write_needed;
+        buffer_offset = offset;
+      }
+
+    static const unsigned Storage_bits =
+      Bitfield_impl::Num_bits<Storage_t>::Value;
+
+    static const unsigned First_storage_offset =
+      (Traits::First_bit == 0) ?
+        ~unsigned(0) : (Traits::First_bit / Storage_bits);
+
+    static const unsigned Last_storage_offset =
+      (Traits::End_bit == ~unsigned(0)) ?
+        ~unsigned(0) : (Traits::End_bit / Storage_bits);
+
+    const Storage_access_t sa;
+
+    enum { Empty, No_read_needed, Write_needed } buffer_status;
+
+    unsigned buffer_offset;
+
+    Storage_t buffer;
+
+    // Common buffer handling for read or write.
+    void handle_buffer(unsigned offset)
+      {
+        if (buffer_status == Empty)
+          return;
+
+        if (offset < buffer_offset)
+          {
+            // Fields are not being written in order.
+
+            // Do this before handle_backwards() in case of exception.
+            buffer_status = Empty;
+
+            Traits::handle_backwards(buffer_offset, offset);
+          }
+        else if (offset > buffer_offset)
+          {
+            flush();
+
+            buffer_status = Empty;
+          }
+      }
+
+  }; // end class Bitfield_seq_storage_write_buf
+
+template <class Storage_access_t, class Traits>
+class Bitfield_seq_storage_write_t
+  {
+  public:
+
+    typedef typename Storage_access_t::Storage_t Storage_t;
+
+    Bitfield_seq_storage_write_t(
+      Bitfield_seq_storage_write_buf<Storage_access_t, Traits> &ssw_)
+      : ssw(ssw_), cum_offset(0)
+      { }
+
+    void operator += (unsigned offset) { cum_offset += offset; }
+
+    Storage_t read() { return(ssw.read(cum_offset)); }
+
+    void write(Storage_t t) { ssw.write(cum_offset, t); }
+
+  private:
+
+    Bitfield_seq_storage_write_buf<Storage_access_t, Traits> &ssw;
+
+    unsigned cum_offset;
+
+  }; // end class Bitfield_seq_storage_write_t
 
 #endif // Include once.
