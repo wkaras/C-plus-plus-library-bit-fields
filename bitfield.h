@@ -246,6 +246,17 @@ struct Err_act_default
     static void value_too_big(Value_t /* v */, unsigned /* field_width */) { }
   };
 
+template<class Format, typename Storage_t>
+struct Define
+  {
+    static const unsigned Storage_bits = Num_bits<Storage_t>::Value;
+
+    static const unsigned Dimension =
+      (sizeof(Format) + Storage_bits - 1) / Storage_bits;
+
+    typedef Storage_t T[Dimension];
+  };
+
 } // namespace Bitfield_impl
 
 template <typename V_t = unsigned, typename S_t = V_t>
@@ -314,16 +325,7 @@ class Bitfield
       Bitfield_impl::Num_bits<Storage_t>::Value;
 
     template<class Format>
-    struct Define
-      {
-        static const unsigned Storage_bits =
-          Bitfield_impl::Num_bits<Storage_t>::Value;
-
-        static const unsigned Dimension =
-          (sizeof(Format) + Storage_bits - 1) / Storage_bits;
-
-        typedef Storage_t T[Dimension];
-      };
+    struct Define : public Bitfield_impl::Define<Format, Storage_t> { };
 
     static Value_t mask(unsigned field_width)
       {
@@ -668,54 +670,60 @@ class Bitfield
 
   }; // class Bitfield
 
-template <class Bitfield, class Fmt>
-struct Bitfield_w_fmt : public Bitfield
+template <class Bitfield_traits, class Fmt>
+struct Bitfield_w_fmt : public Bitfield_traits
   {
     static const unsigned Storage_bits =
-      Bitfield_impl::Num_bits<typename Bitfield::Storage_t>::Value;
+      Bitfield_impl::Num_bits<typename Bitfield_traits::Storage_t>::Value;
 
     template <class Base_fmt>
     static unsigned base_offset(unsigned derived_offset = 0)
       {
-        const unsigned Storage_bits = Bitfield::Storage_bits;
-
         const unsigned From_start_unaligned =
           reinterpret_cast<char *>(static_cast<Base_fmt *>(
             reinterpret_cast<Fmt *>(0x100))) - 
           reinterpret_cast<char *>(0x100);
 
         const unsigned Unaligned =
-          Bitfield::Fmt_offset_from_start ?
+          Bitfield_traits::Fmt_offset_from_start ?
             From_start_unaligned :
             sizeof(Fmt) - sizeof(Base_fmt) - From_start_unaligned;
 
         return(
           Unaligned +
-          ((!Bitfield::Fmt_align_at_zero_offset &&
+          ((!Bitfield_traits::Fmt_align_at_zero_offset &&
             ((sizeof(Fmt) % Storage_bits) != 0) &&
             (derived_offset == 0)) ?
              Storage_bits - (sizeof(Fmt) % Storage_bits) : derived_offset));
       }
 
     typedef Fmt Format;
+
+    typedef typename Bitfield_impl::Define<Fmt, typename Bitfield_traits::Storage_t>::T SAT;
   };
 
-#if 0
+#if __clang__
 
-// Standards prior to C++11 do not consider any expression with reintepret_cast
-// to be compile-time constants.
+// Strict Standard C++ does not consider any expression with reintepret_cast
+// to be a compile-time constant.  GCC considers it an error to use this macro as
+// a constant expression, but clang only warns about it.
 
-#define BITF_OFFSET_FROM_START(BWF, FIELD_SPEC) \
-  (reinterpret_cast<char *>( \
-     &(reinterpret_cast<typename BWF::Format *>(0x100)->FIELD_SPEC)) - \
+#define BITF_OFFSET_OF(CLASS, FIELD_SPEC) \
+  (reinterpret_cast<char *>(&(reinterpret_cast<CLASS *>(0x100)->FIELD_SPEC)) - \
    reinterpret_cast<char *>(0x100))
 
 #else
 
-#define BITF_OFFSET_FROM_START(BWF, FIELD_SPEC) \
-  offsetof(typename BWF::Format, FIELD_SPEC)
+// clang won't allow FIELD_SPEC to be a member of a member in 'offsetof'.
+// This is a bug in clang, see:
+// https://open-std.org/JTC1/SC22/WG14/www/docs/n2396.htm#dr_496
+
+#define BITF_OFFSET_OF(CLASS, FIELD_SPEC) offsetof(CLASS, FIELD_SPEC)
 
 #endif
+
+#define BITF_OFFSET_FROM_START(BWF, FIELD_SPEC) \
+  BITF_OFFSET_OF(typename BWF::Format, FIELD_SPEC)
 
 #define BITF_WIDTH(BWF, FIELD_SPEC) \
   (sizeof(reinterpret_cast<typename BWF::Format *>(0x100)->FIELD_SPEC))

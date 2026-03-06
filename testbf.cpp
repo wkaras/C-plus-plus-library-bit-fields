@@ -508,23 +508,24 @@ class Test_field_offset : private Test_base
     template <unsigned Bw>
     struct Format : private Bitfield_format
       {
+        struct S
+          {
+            F<11> c;
+            F<7> d;
+          };
+
         F<1> a;
         union
           {
             F<Bw> b;
-            struct
-              {
-                F<11> c;
-                F<7> d;
-              }
-            x;
+            S x;
           };
         F<5> e[3]; 
       };
 
     template <class Bf, unsigned Bw>
     bool t(unsigned base_ofs, unsigned ss, unsigned oa, unsigned ob,
-           unsigned oc, unsigned od, unsigned oe0, unsigned oe2 )
+           unsigned oc, unsigned od, unsigned oe0, unsigned oe2)
       {
         typedef Format<Bw> Fmt;
 
@@ -626,15 +627,15 @@ Test_field_offset test_field_offset;
 
 class Test_base_offset : private Test_base
   {
-    class A : public Bitfield_format { F<4> i, j; };
+    struct A : public Bitfield_format { F<4> i, j; };
 
-    class B : public Bitfield_format { F<13> x; };
+    struct B : public Bitfield_format { F<13> x; };
 
-    class C : public Bitfield_format { F<27> x; };
+    struct C : public Bitfield_format { F<27> x; };
 
-    class D1 { BITF_DEF_F public: A a; B b; C c; F<8> y; };
+    struct D1 { BITF_DEF_F public: A a; B b; C c; F<8> y; };
 
-    class D2 : public A, public B, public C
+    struct D2 : public A, public B, public C
       { F<8> y; };
 
     struct Bft2 : public Bitfield_traits_default<uint16_t>
@@ -670,19 +671,19 @@ class Test_base_offset : private Test_base
               (Y(C, c) == Bwf##N::base_offset<C>()))) \
           return(false);
 
-        #define Z(S, F) offsetof(D1, F)
+        #define Z(S, F) BITF_OFFSET_OF(D1, F)
         X(Z, 1)
         #undef Z
 
-        #define Z(S, F) (sizeof(D1) - sizeof(S) - offsetof(D1, F))
+        #define Z(S, F) (sizeof(D1) - sizeof(S) - BITF_OFFSET_OF(D1, F))
         X(Z, 2)
         #undef Z
 
-        #define Z(S, F) (offsetof(D1, F) + 8)
+        #define Z(S, F) (BITF_OFFSET_OF(D1, F) + 8)
         X(Z, 3)
         #undef Z
 
-        #define Z(S, F) (sizeof(D1) - sizeof(S) - offsetof(D1, F) + 8)
+        #define Z(S, F) (sizeof(D1) - sizeof(S) - BITF_OFFSET_OF(D1, F) + 8)
         X(Z, 4)
         #undef Z
 

@@ -33,7 +33,7 @@ SOFTWARE.
 
 using namespace std;
 
-struct Test_base;
+class Test_base;
 
 vector<Test_base *> test_list;
 
